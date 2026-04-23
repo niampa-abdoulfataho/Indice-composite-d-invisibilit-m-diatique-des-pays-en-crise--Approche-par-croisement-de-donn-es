@@ -1,0 +1,682 @@
+---
+title: "L'Indice d'Invisibilité"
+subtitle: "Quand les données révèlent le silence médiatique sur les crises humanitaires"
+author: "Abdoul Fataho NIAMPA"
+date: today
+format:
+  html:
+    theme: darkly
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+    css: assets/style.css
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: true
+lang: fr
+---
+
+```{r setup}
+#| include: false
+library(tidyverse)
+library(plotly)
+library(leaflet)
+library(scales)
+library(glue)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+
+source("../R/viz/charts.R")
+source("../R/viz/maps.R")
+
+df_indices <- read_csv("../data/final/crises_indices.csv", show_col_types = FALSE)
+df_biais   <- read_csv("../data/final/biais_continental.csv", show_col_types = FALSE)
+df_vol     <- read_csv("../data/final/volatilite_media.csv", show_col_types = FALSE)
+df_hypo    <- read_csv("../data/final/resultats_hypotheses.csv", show_col_types = FALSE)
+
+raw_guardian <- read_csv("../data/raw/guardian/articles.csv", show_col_types = FALSE)
+raw_nyt <- read_csv("../data/raw/nyt/articles.csv", show_col_types = FALSE)
+reliefweb_clean <- read_csv("../data/processed/reliefweb_clean.csv", show_col_types = FALSE)
+ucdp_clean <- read_csv("../data/processed/ucdp_clean.csv", show_col_types = FALSE)
+unhcr_clean <- read_csv("../data/processed/unhcr_clean.csv", show_col_types = FALSE)
+media_clean <- read_csv("../data/processed/media_articles_clean.csv", show_col_types = FALSE)
+fts_agg <- read_csv("../data/raw/fts/fts_aggregated.csv", show_col_types = FALSE)
+
+df_pays <- df_indices |>
+  group_by(iso3, country, continent_group) |>
+  summarise(
+    I_moy          = round(mean(I, na.rm = TRUE), 2),
+    G_moy          = round(mean(G, na.rm = TRUE), 2),
+    M_moy          = round(mean(M, na.rm = TRUE), 2),
+    morts_total    = sum(total_deaths_all, na.rm = TRUE),
+    articles_total = sum(nb_articles_total, na.rm = TRUE),
+    zone           = names(sort(table(zone), decreasing = TRUE))[1],
+    .groups = "drop"
+  )
+
+df_top_invisible <- df_indices |>
+  group_by(iso3, country, continent_group) |>
+  summarise(
+    G_moy          = mean(G, na.rm = TRUE),
+    M_moy          = mean(M, na.rm = TRUE),
+    I_moy          = mean(I, na.rm = TRUE),
+    morts_total    = sum(total_deaths_all, na.rm = TRUE),
+    articles_total = sum(nb_articles_total, na.rm = TRUE),
+    gdp_habitant   = mean(gdp_md * 1e6 / pop_est, na.rm = TRUE),
+    pop_moy        = mean(pop_est, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(
+    G_moy > 2,
+    continent_group %in% c("Afrique", "Asie", "Amériques"),
+    gdp_habitant < 15000,
+    pop_moy < 200e6,
+    morts_total > 500
+  ) |>
+  arrange(desc(I_moy))
+
+df_distance <- df_indices |>
+  mutate(
+    groupe_distance = case_when(
+      dist_redactions_km < 4000 ~ "Proche (< 4 000 km)",
+      dist_redactions_km < 8000 ~ "Moyen (4-8 000 km)",
+      TRUE ~ "Loin (> 8 000 km)"
+    )
+  ) |>
+  group_by(groupe_distance) |>
+  summarise(
+    I_mean = round(mean(I, na.rm = TRUE), 2),
+    G_mean = round(mean(G, na.rm = TRUE), 2),
+    M_mean = round(mean(M, na.rm = TRUE), 2),
+    n_obs  = n(),
+    .groups = "drop"
+  )
+
+df_h4 <- df_indices |>
+  filter(is.finite(fts_log_usd), fts_total_usd > 0)
+
+h4_cor_m <- suppressWarnings(cor.test(df_h4$M, df_h4$fts_log_usd, method = "spearman"))
+h4_cor_i <- suppressWarnings(cor.test(df_h4$I, df_h4$fts_log_usd, method = "spearman"))
+h4_lm <- lm(fts_log_usd ~ M + G, data = df_h4)
+h4_lm_sum <- summary(h4_lm)
+
+h4_table <- tibble(
+  Indicateur = c(
+    "Observations avec financement FTS",
+    "Corrélation Spearman M ~ log(FTS)",
+    "p-value M ~ log(FTS)",
+    "Corrélation Spearman I ~ log(FTS)",
+    "p-value I ~ log(FTS)",
+    "Coefficient de M dans log(FTS) ~ M + G",
+    "Coefficient de G dans log(FTS) ~ M + G",
+    "R² du modèle"
+  ),
+  Valeur = c(
+    nrow(df_h4),
+    round(unname(h4_cor_m$estimate), 3),
+    signif(h4_cor_m$p.value, 4),
+    round(unname(h4_cor_i$estimate), 3),
+    signif(h4_cor_i$p.value, 4),
+    round(coef(h4_lm)[["M"]], 4),
+    round(coef(h4_lm)[["G"]], 4),
+    round(h4_lm_sum$r.squared, 3)
+  )
+)
+
+n_pays <- n_distinct(df_indices$iso3)
+n_obs <- nrow(df_indices)
+morts_tot <- sum(df_indices$total_deaths_all, na.rm = TRUE)
+arts_tot <- sum(df_indices$nb_articles_total, na.rm = TRUE)
+pct_rouge <- mean(df_indices$zone == "Rouge (invisible)", na.rm = TRUE) * 100
+pct_orange <- mean(df_indices$zone == "Orange (sous-couvert)", na.rm = TRUE) * 100
+n_guardian_raw <- nrow(raw_guardian)
+n_nyt_raw <- nrow(raw_nyt)
+n_media_clean <- nrow(media_clean)
+
+pays_invisible_struct <- df_top_invisible |>
+  slice_head(n = 1) |>
+  pull(country)
+
+I_max_struct <- df_top_invisible |>
+  slice_head(n = 1) |>
+  pull(I_moy)
+
+h2_rho <- df_hypo |>
+  filter(hypothese == "H2 - Biais proximité (via I)") |>
+  pull(direction)
+
+h2_p <- df_hypo |>
+  filter(hypothese == "H2 - Biais proximité (via I)") |>
+  pull(p_value)
+
+h4_direction <- df_hypo |>
+  filter(hypothese == "H4 - Couverture/Financement") |>
+  pull(direction)
+
+i_afrique <- df_biais |>
+  filter(continent_group == "Afrique") |>
+  pull(mean_I)
+
+i_asie <- df_biais |>
+  filter(continent_group == "Asie") |>
+  pull(mean_I)
+
+i_ameriques <- df_biais |>
+  filter(continent_group == "Amériques") |>
+  pull(mean_I)
+
+i_europe <- df_biais |>
+  filter(continent_group == "Europe") |>
+  pull(mean_I)
+```
+
+```{=html}
+<style>
+body, p, li, td, th, .quarto-section-identifier {
+  color: #f0ede8 !important;
+}
+h1, h2, h3 { color: #e74c3c !important; }
+h4, h5, h6 { color: #e67e22 !important; }
+</style>
+```
+
+## Résumé exécutif
+
+Ce rapport examine un décalage simple mais décisif : **certaines crises humanitaires sont très graves sans être proportionnellement visibles dans l'espace médiatique international**. À partir d'un corpus couvrant la période 2020-2024, l'analyse compare la **gravité observée** d'une crise à la **visibilité médiatique** qu'elle reçoit.
+
+Cette comparaison est synthétisée dans un indicateur composite : **l'Indice d'Invisibilité (I)**. Plus `I` est élevé, plus une crise apparaît grave relativement à l'attention médiatique mesurée. Le rapport ne cherche donc pas à dire quelles crises sont les plus graves au sens absolu, mais lesquelles sont **les moins visibles au regard de leur gravité**.
+
+### Chiffres clés
+
+::::::::::::::: {style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0;"}
+::::: stat-box
+::: value
+`r n_pays`
+:::
+
+::: label
+Pays analysés
+:::
+:::::
+
+::::: {.stat-box style="border-color: #e67e22;"}
+::: {.value style="color: #e67e22;"}
+`r scales::comma(morts_tot)`
+:::
+
+::: label
+Morts
+:::
+:::::
+
+::::: {.stat-box style="border-color: #2980b9;"}
+::: {.value style="color: #2980b9;"}
+`r scales::comma(arts_tot)`
+:::
+
+::: label
+Articles retenus
+:::
+:::::
+
+:::::::::::::::
+
+
+## 1. Introduction et problématique
+
+### 1.1 Le paradoxe humanitaire
+
+Chaque année, des millions de personnes sont affectées par des conflits armés, des catastrophes naturelles, des déplacements forcés ou des crises sanitaires. Pourtant, toutes ces situations ne reçoivent pas la même attention médiatique internationale. Certaines monopolisent les unes pendant des semaines ; d'autres restent périphériques malgré des impacts humains majeurs.
+
+Cette inégalité d'attention n'est pas neutre. Elle influence la perception publique, les priorités politiques, l'agenda diplomatique et parfois même les dynamiques de financement. Une crise peu visible risque donc de devenir aussi une crise moins discutée, moins comprise et moins soutenue.
+
+Le projet cherche à objectiver ce décalage au moyen d'un indicateur synthétique construit afin de passer d'une intuition souvent formulée dans le débat public à une mesure comparable entre pays et dans le temps.
+
+### 1.2 Questions de recherche
+
+Quatre hypothèses structurent l'étude :
+
+**H1** : les crises du Sud global sous-représentées médiatiquement par rapport à leur gravité.
+
+**H2** : la couverture médiatique diminue avec la distance aux grandes rédactions internationales.
+
+**H3** : les crises aiguës suivent une dynamique de type "Peak & Forget".
+
+**H4** : les crises les plus couvertes sur le plan médiatique reçoivent davantage de financement humanitaire.
+
+## 2. Méthodologie
+
+### 2.1 Sources de données
+
+Le pipeline final mobilise les sources suivantes :
+
+```{r sources-table}
+tibble(
+  Source = c(
+    "EM-DAT",
+    "UCDP GED v25.1",
+    "The Guardian API",
+    "New York Times Article Search API",
+    "ReliefWeb",
+    "UNHCR Population API",
+    "OCHA FTS API",
+    "rnaturalearth / données pays"
+  ),
+  Type = c(
+    "Fichier source local",
+    "Fichier RDS",
+    "API REST",
+    "API REST",
+    "Scraping HTML",
+    "API REST",
+    "API REST",
+    "Package R"
+  ),
+  Contenu = c(
+    "Catastrophes naturelles",
+    "Événements de conflit",
+    "Articles de presse internationale",
+    "Articles de presse internationale",
+    "Rapports et catastrophes humanitaires",
+    "Déplacements forcés (IDPs, réfugiés)",
+    "Financement humanitaire",
+    "Population, géographie, distances"
+  ),
+  Volume = c(
+    "2 190 lignes nettoyées",
+    scales::comma(nrow(ucdp_clean)),
+    scales::comma(n_guardian_raw),
+    scales::comma(n_nyt_raw),
+    scales::comma(nrow(reliefweb_clean)),
+    scales::comma(nrow(unhcr_clean)),
+    scales::comma(nrow(fts_agg)),
+    "234 pays"
+  )
+) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 1 : Sources de données mobilisées dans le pipeline final"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = TRUE) |>
+  column_spec(1, bold = TRUE, color = "#e74c3c")
+```
+
+Au total, la table média consolidée utilisée pour l'analyse contient **`r scales::comma(n_media_clean)`** articles retenus après nettoyage et dédoublonnage.
+
+### 2.2 Pipeline de traitement
+
+Le pipeline se déroule en quatre étapes :
+
+1.  **Collecte** : récupération des catastrophes, conflits, articles, données de déplacement et flux financiers.
+2.  **Nettoyage et fusion** : harmonisation ISO3, agrégations pays-année, traitement géographique et consolidation des tables.
+3.  **Construction des indices** : calcul du score de gravité `G`, du score médiatique `M`, de l'indice d'invisibilité `I` et des indicateurs complémentaires.
+4.  **Analyse et visualisation** : tests statistiques sur les hypothèses, cartes et graphiques synthétiques.
+
+L'unité d'analyse retenue est le **pays-année**, ce qui permet de comparer des situations nationales sur la période tout en conservant une lecture temporelle simple.
+
+### 2.3 Construction des indices
+
+#### Score de Gravité (G)
+
+Le score de gravité agrège plusieurs dimensions de l'impact humanitaire :
+
+$$G = 0.35 \cdot S_{mort} + 0.20 \cdot S_{conf} + 0.20 \cdot S_{dep} + 0.15 \cdot S_{aff} + 0.10 \cdot S_{nb}$$
+
+```{r table-poids}
+tibble(
+  Composante = c(
+    "Mortalité relative",
+    "Intensité des conflits",
+    "Déplacement forcé enrichi",
+    "Personnes affectées",
+    "Nombre de crises"
+  ),
+  Formule = c(
+    "morts / population × 10^6",
+    "événements UCDP / population × 10^6",
+    "max(sans-abri EM-DAT, IDPs + réfugiés UNHCR) / population × 10^6",
+    "affectés / population × 10^6",
+    "log(1 + nb_disasters + nb_rw_disasters)"
+  ),
+  Poids = c("35%", "20%", "20%", "15%", "10%"),
+  Justification = c(
+    "La mortalité reste l'indicateur le plus direct de gravité",
+    "Les conflits structurent les crises prolongées",
+    "Le déplacement capte l'ampleur sociale de la crise",
+    "Les personnes affectées complètent la mortalité",
+    "La récurrence signale une vulnérabilité structurelle"
+  )
+) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 2 : Composantes du score de gravité"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = TRUE) |>
+  column_spec(3, bold = TRUE, color = "#e74c3c")
+```
+
+#### Score Médiatique (M)
+
+Le Score Médiatique (M) est un indicateur mathématique conçu pour mesurer l'attention internationale portée à un sujet ou à un événement. Il combine volume d'articles, diversité des sources et corrections de structure :
+
+$$M = \frac{\log(1 + \text{articles}) \times \log(1 + \text{sources})}{\text{proximités} \times \text{biais linguistique}}$$
+
+Les corrections principales sont :
+
+-   la proximité géographique avec les grandes rédactions ;
+-   le biais en faveur de l'anglais ;
+-   la diversité des sources plutôt qu'un simple volume brut.
+
+Cette correction ne prétend pas supprimer tout biais médiatique. Elle cherche plutôt à éviter qu'un simple comptage brut des articles soit confondu avec une mesure fidèle de l'attention relative.Elle s'inspire de la théorie du News Flow.
+Cette théorie (flux d'informations internationaux) démontre que l'actualité mondiale ne circule pas de manière neutre ou équilibrée. Elle prouve que les médias d'envergure internationale sélectionnent et privilégient systématiquement les événements qui se déroulent dans des pays riches, proches géographiquement ou partageant une langue commune. Cette dynamique crée une représentation biaisée et inégale du monde, largement dominée par les puissances occidentales.
+
+#### Indice d'Invisibilité (I)
+
+
+$$I = \frac{G}{M + \varepsilon} \qquad \text{avec } \varepsilon = 0.5$$
+
+Une valeur élevée de `I` signifie qu'une crise est grave au regard d'une couverture médiatique relativement faible.
+
+
+### 2.4 Limites méthodologiques
+
+
+1.  **Couverture médiatique encore déséquilibrée** : le pipeline final intègre seulement The Guardian et New York Times.
+2.  **Sous-estimation structurelle des conflits** : les données de mortalité en contexte de guerre restent incomplètes.
+3.  **FTS mesure les flux humanitaires déclarés** : cela n'épuise pas toutes les formes de soutien ni tous les mécanismes politiques.
+
+
+## 3. Résultats globaux
+
+### 3.1 Carte mondiale de l'Indice d'Invisibilité
+
+```{r carte-statique}
+#| fig-cap: "Figure 1 : Carte mondiale de l'Indice d'Invisibilité (2020-2024)."
+#| out-width: "100%"
+
+map1 = plot_map_static(df_indices)
+print(map1)
+```
+
+La carte fait apparaître une concentration de fortes valeurs d'invisibilité en Asie, en Afrique centrale et orientale, ainsi qu'en Amérique latine. L'Europe apparaît en moyenne moins invisible, mais certaines observations y restent très contrastées selon les années. La géographie du phénomène n'est donc pas uniforme : elle combine des zones durablement sous-couvertes et des pics d'invisibilité plus ponctuels.
+
+### 3.2 Gravité vs couverture médiatique
+
+```{r scatter-gm}
+#| fig-cap: "Figure 2 — Score de gravité (G) et score médiatique (M) agrégés par pays."
+
+plot_scatter_gm(df_indices, interactive = TRUE)
+```
+
+La majorité des pays se situe au-dessus de la diagonale idéale : la gravité y dépasse la visibilité médiatique. La sous-couverture n'apparaît donc pas comme une anomalie marginale, mais comme une propriété structurelle du corpus étudié.
+
+
+
+
+### 3.3 Top 10 des crises les plus invisibles
+
+```{r top-invisible}
+#| fig-cap: "Figure 4 — Top 10 des crises les plus invisibles selon les critères du classement."
+
+top_invisible = plot_top_invisible(df_indices)
+
+print(top_invisible)
+```
+
+Ce classement isole les pays cumulant forte gravité, mortalité non négligeable et faible visibilité relative. En gros : On ne garde que les "vrais oubliés" les plus importants.
+
+
+## 4. Analyse des biais
+
+### 4.1 Biais géographique par continent
+
+```{r zones-continent}
+#| fig-cap: "Figure 6 : Distribution des zones d'invisibilité par continent."
+
+zones_by_continent=plot_zones_by_continent(df_indices)
+print(zones_by_continent)
+```
+
+Les moyennes d'invisibilité les plus élevées concernent ici les **Amériques (`r round(i_ameriques, 2)`)** et l'**Asie (`r round(i_asie, 2)`)**, devant l'**Afrique (`r round(i_afrique, 2)`)**. L'Europe reste le groupe le moins invisible avec **`r round(i_europe, 2)`**. Ce résultat invite à éviter une lecture trop binaire du problème : l'invisibilité médiatique ne se réduit pas à une opposition simple entre Afrique et Europe.
+
+### 4.2 Test H1 — Sud global
+
+```{r h1-tableau}
+df_indices |>
+  mutate(
+    nord_sud = case_when(
+      continent_group == "Europe" ~ "Nord global",
+      continent_group == "Amériques" & iso3 %in% c("USA", "CAN") ~ "Nord global",
+      TRUE ~ "Sud global"
+    )
+  ) |>
+  group_by(nord_sud) |>
+  summarise(
+    `I médian` = round(median(I, na.rm = TRUE), 2),
+    `I moyen` = round(mean(I, na.rm = TRUE), 2),
+    `G moyen` = round(mean(G, na.rm = TRUE), 2),
+    `M moyen` = round(mean(M, na.rm = TRUE), 2),
+    `N obs.` = n(),
+    .groups = "drop"
+  ) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 3 — Comparaison Nord global / Sud global"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+Le différentiel descriptif existe, mais il n'est pas confirmé statistiquement dans cette forme
+(`p = `r df_hypo |> 
+  dplyr::filter(hypothese == "H1 - Biais Sud global") |> 
+  dplyr::pull(p_value) |> 
+  as.numeric() |> 
+  dplyr::first() |> 
+  signif(3)``). 
+H1 n'est donc **pas confirmée** dans cette spécification. Cela ne signifie pas qu'il n'existe aucun biais global, mais plutôt que la partition Nord/Sud utilisée ici ne suffit pas, à elle seule, à expliquer l'invisibilité observée.
+
+### 4.3 Test H2 — Proximité géographique
+
+```{r h2-distance}
+df_distance |>
+  rename(`Groupe distance` = groupe_distance,
+         `I moyen` = I_mean,
+         `G moyen` = G_mean,
+         `M moyen` = M_mean,
+         `N obs.` = n_obs) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 4 — Invisibilité selon la distance aux grandes rédactions"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+On observe une progression nette de l'invisibilité avec la distance. 
+Les pays lointains dépassent **I = `r df_distance |> 
+  dplyr::filter(groupe_distance == "Loin (> 8 000 km)") |> 
+  dplyr::pull(I_mean) |> 
+  as.numeric() |> 
+  dplyr::first() |> 
+  round(2)`**, 
+contre **`r df_distance |> 
+  dplyr::filter(groupe_distance == "Proche (< 4 000 km)") |> 
+  dplyr::pull(I_mean) |> 
+  as.numeric() |> 
+  dplyr::first() |> 
+  round(2)`** pour les pays proches. 
+
+La corrélation a été confirmée par le test de Spearman; H2 est donc **confirmée**. L'effet reste modéré, mais il est cohérent avec l'idée qu'une crise éloignée des grands centres de production de l'information a davantage de chances d'être sous-exposée.
+
+## 5. Dynamique temporelle
+
+### 5.1 Test H3 — Peak & Forget
+
+**H3 est confirmée** (`p = `r df_hypo |> 
+  dplyr::filter(hypothese == "H3 - Peak & Forget") |> 
+  dplyr::pull(p_value) |> 
+  dplyr::first() |> 
+  signif(3)``). Les crises aiguës présentent une volatilité médiatique plus forte que les crises chroniques.
+
+
+```{r peak-forget-table}
+df_vol |>
+  filter(peak_forget) |>
+  left_join(df_pays |> select(country, I_moy, morts_total, articles_total), by = "country") |>
+  arrange(desc(V_final)) |>
+  slice_head(n = 10) |>
+  transmute(
+    Pays = country,
+    Continent = continent_group,
+    `V` = round(V_final, 2),
+    `I moyen` = I_moy,
+    Morts = scales::comma(morts_total),
+    Articles = scales::comma(articles_total)
+  ) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 5 — Top 10 des pays présentant le plus fort effet Peak & Forget"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = TRUE)
+```
+
+## 6. Financement humanitaire (H4)
+
+```{r h4-tableau}
+h4_table |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 6 — Résumé des tests reliant visibilité médiatique et financement FTS"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+L'analyse statistique rejette formellement l'hypothèse H4. Contrairement aux idées reçues, la visibilité médiatique (Score M) n'agit pas comme un moteur du financement humanitaire international.
+Le véritable enseignement réside dans le rôle de l'Indice d'Invisibilité (I) :
+Le tableau 6 révèle une corrélation significative (0.22 , p-value inférieure au seuil) entre cet indice et les fonds alloués. Ce résultat suggère que le système humanitaire parvient à identifier et à financer des crises précisément parce qu'elles sont invisibles ou négligées par les grands journaux.
+
+
+## 7. Cas d'étude
+
+### 7.1 Ukraine vs Yémen
+
+```{r cas-ukraine-yemen}
+df_indices |>
+  filter(iso3 %in% c("UKR", "YEM")) |>
+  group_by(iso3, country) |>
+  summarise(
+    `G moyen` = round(mean(G, na.rm = TRUE), 2),
+    `M moyen` = round(mean(M, na.rm = TRUE), 2),
+    `I moyen` = round(mean(I, na.rm = TRUE), 2),
+    `Morts totaux` = scales::comma(sum(total_deaths_all, na.rm = TRUE)),
+    `Articles` = scales::comma(sum(nb_articles_total, na.rm = TRUE)),
+    Zone = names(sort(table(zone), decreasing = TRUE))[1],
+    .groups = "drop"
+  ) |>
+  rename(Pays = country) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 7 — Ukraine vs Yémen"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+Ce contraste illustre qu'une crise géopolitiquement centrale n'est pas nécessairement la plus grave, mais peut être mieux relayée. À l'inverse, une crise prolongée comme celle du Yémen combine gravité forte et visibilité insuffisante. Ce type de comparaison rend l'indice plus concret en montrant comment deux crises très connues peuvent malgré tout occuper des positions différentes dans la hiérarchie de l'invisibilité.
+
+## 8. Synthèse des hypothèses
+
+```{r hypotheses}
+df_hypo |>
+  select(
+    Hypothèse = hypothese,
+    `p-value` = p_value,
+    Direction = direction,
+    Conclusion = conclusion
+  ) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 9 — Résultats des tests statistiques"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = TRUE)
+```
+
+Deux hypothèses ressortent clairement : **H2** sur la proximité géographique et **H3** sur le "Peak & Forget". **H1** et **H4** ne sont pas confirmées dans leur formulation actuelle.
+
+## 9. Conclusion
+
+### 9.1 Apports de l'étude
+
+Les principaux apports sont :
+-  Une mesure objective du silence : La création du Score Médiatique (M) et de l'Indice d'Invisibilité (I) permet de quantifier précisément quelles crises sont délaissées par les médias internationaux (NYT, Guardian) par rapport à leur gravité réelle.
+-  La preuve d’un biais géographique : Elle démontre statistiquement que l'attention médiatique est régie par la proximité et les intérêts occidentaux plutôt que par la souffrance humaine (mortalité), laissant l'Afrique et l'Asie dans un angle mort systémique.
+
+
+### 9.2 Principaux enseignements
+
+1.  **`r round(pct_rouge + pct_orange, 1)`%** des observations sont sous-couvertes.
+2.  **La distance aux grandes rédactions** augmente l'invisibilité.
+3.  **Le "Peak & Forget"** est visible dans les séries temporelles et confirmé statistiquement.
+4.  **Le financement FTS** n'est pas mécaniquement corrélé à la visibilité médiatique.
+
+
+### 9.3 Pistes d'amélioration
+
+-   stabiliser et étendre la collecte multi-sources au-delà du lot déjà intégré;
+-   étendre l'analyse à des sources non anglophones pour limiter le biais de langue.
+
+## 10. Annexes
+
+### A. Dictionnaire des variables principales
+
+```{r dico}
+tibble(
+  Variable = c(
+    "iso3", "year", "G", "M", "I",
+    "total_deaths_all", "nb_articles_total",
+    "dist_redactions_km", "unhcr_idps",
+    "unhcr_refugees", "fts_total_usd", "fts_log_usd", "zone"
+  ),
+  Type = c(
+    "chr", "int", "dbl", "dbl", "dbl",
+    "dbl", "int", "dbl", "dbl", "dbl", "dbl", "dbl", "chr"
+  ),
+  Description = c(
+    "Code ISO3 du pays",
+    "Année d'observation",
+    "Score de gravité",
+    "Score médiatique corrigé",
+    "Indice d'invisibilité G/(M+0.5)",
+    "Mortalité agrégée EM-DAT + UCDP",
+    "Nombre d'articles retenus",
+    "Distance moyenne aux grandes rédactions",
+    "Déplacés internes UNHCR",
+    "Réfugiés UNHCR",
+    "Montant total FTS agrégé",
+    "Log du financement FTS",
+    "Catégorie d'invisibilité"
+  )
+) |>
+  kable(
+    booktabs = TRUE,
+    caption = "Tableau 10 — Variables principales du fichier crises_indices.csv"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = TRUE)
+```
+
+
+### B. Sources
+
+| Source        | Référence                                            |
+|---------------|------------------------------------------------------|
+| EM-DAT        | Centre for Research on the Epidemiology of Disasters |
+| UCDP GED      | Uppsala Conflict Data Program                        |
+| The Guardian  | Open Platform API                                    |
+| New York Times| Article Search API                                   |
+| ReliefWeb     | OCHA / United Nations                                |
+| UNHCR         | Refugee Statistics API                               |
+| OCHA FTS      | Financial Tracking Service                           |
+| rnaturalearth | Données géographiques pays                           |

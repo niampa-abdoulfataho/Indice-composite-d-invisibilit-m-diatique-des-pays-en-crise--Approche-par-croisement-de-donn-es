@@ -1,0 +1,115 @@
+/* ============================================================
+   Style personnalisé — Indice d'Invisibilité
+   ============================================================ */
+
+:root {
+  --rouge:  #c0392b;
+  --orange: #e67e22;
+  --vert:   #27ae60;
+  --bleu:   #2980b9;
+  --fond:   #1a1a2e;
+  --texte:  #ecf0f1;
+  --gris:   #bdc3c7;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--fond) !important;
+  color: var(--texte) !important;
+}
+
+/* Titre principal */
+h1.title {
+  color: var(--rouge) !important;
+  font-size: 2.2rem;
+  font-weight: 800;
+  border-bottom: 3px solid var(--rouge);
+  padding-bottom: 12px;
+}
+
+/* Sous-titres */
+h1, h2, h3 {
+  color: var(--rouge) !important;
+}
+
+h4, h5, h6 {
+  color: var(--orange) !important;
+}
+
+/* Callout boxes */
+.callout-note {
+  border-left: 4px solid var(--bleu) !important;
+  background: rgba(41, 128, 185, 0.1) !important;
+}
+
+.callout-warning {
+  border-left: 4px solid var(--orange) !important;
+  background: rgba(230, 126, 34, 0.1) !important;
+}
+
+.callout-important {
+  border-left: 4px solid var(--rouge) !important;
+  background: rgba(192, 57, 43, 0.1) !important;
+}
+
+/* Tableaux */
+table {
+  background-color: #16213e !important;
+  color: var(--texte) !important;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th {
+  background-color: var(--rouge) !important;
+  color: white !important;
+  padding: 10px;
+}
+
+td {
+  padding: 8px;
+  border-bottom: 1px solid #2c3e50;
+}
+
+tr:hover td {
+  background-color: #16213e !important;
+}
+
+/* Code blocks */
+pre {
+  background-color: #0d1117 !important;
+  border: 1px solid #2c3e50;
+  border-radius: 6px;
+}
+
+/* Badge zones */
+.badge-rouge  { background: var(--rouge);  color: white;
+                padding: 3px 8px; border-radius: 4px; }
+.badge-orange { background: var(--orange); color: white;
+                padding: 3px 8px; border-radius: 4px; }
+.badge-vert   { background: var(--vert);   color: white;
+                padding: 3px 8px; border-radius: 4px; }
+.badge-bleu   { background: var(--bleu);   color: white;
+                padding: 3px 8px; border-radius: 4px; }
+
+/* Stat boxes */
+.stat-box {
+  background: #16213e;
+  border-left: 4px solid var(--rouge);
+  padding: 15px 20px;
+  margin: 10px 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.stat-box .value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--rouge);
+}
+
+.stat-box .label {
+  font-size: 0.85rem;
+  color: var(--gris);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}

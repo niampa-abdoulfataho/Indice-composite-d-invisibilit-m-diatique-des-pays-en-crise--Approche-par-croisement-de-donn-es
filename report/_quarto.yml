@@ -1,0 +1,27 @@
+project:
+  type: default
+
+format:
+  html:
+    theme: darkly
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Sommaire"
+    code-fold: true
+    code-tools: true
+    embed-resources: true
+    fig-width: 10
+    fig-height: 6
+    fig-dpi: 150
+    smooth-scroll: true
+    highlight-style: dracula
+    css: assets/style.css
+
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: true
+
+lang: fr

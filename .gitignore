@@ -1,0 +1,22 @@
+# Données 
+data/
+
+# Environnement R (Packages)
+renv/
+# Sauf le script d'activation si tu veux être pro
+!renv/activate.R
+
+# Fichiers personnels et historique
+.Rhistory
+.RData
+.Renviron
+.Rprofile
+.Rproj.user/
+
+# Rendus Quarto/HTML
+
+report/.quarto/
+report/.tmp/
+report/index_cache/
+report/index_files/
+
