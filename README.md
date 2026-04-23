@@ -1,6 +1,7 @@
-# crisis-media-index
+# Indice composite d'invisibilité - Approche par croisement de données multisources
 
-Indice d'invisibilité médiatique des crises humanitaires, construit à partir de données ouvertes sur les catastrophes, les conflits, les déplacements forcés, la couverture médiatique et le financement humanitaire.
+Modélisation de l'indice d'invisibilité médiatique des crises humanitaires. Une approche par croisement de données multisources : catastrophes (EM-DAT), conflits (UCDP), déplacements de populations (UNHCR) et flux financiers (OCHA FTS).
+
 
 ## Description
 
